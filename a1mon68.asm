@@ -20,7 +20,7 @@
 ; You should have received a copy of the GNU General Public License
 ; along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-            cpu 6800
+	    cpu 6800
 
 xam         equ $0024       ; two bytes
 st          equ $0026       ; two bytes
@@ -94,7 +94,7 @@ nextchar:   ldaa kbd_cr	    ; Key ready?
 ; Process an input line.
 
 cr:	    ldx  #in+256-1  ; Reset text index to in-1, +256 so that
-                            ;  'inc inptr+1' will result in $0200.
+	                    ;  'inc inptr+1' will result in $0200.
 	    stx  inptr
 	    clra	    ; For XAM mode. 0->B.
 
@@ -102,7 +102,7 @@ setblok:    asl	 a	    ; Leaves $56 if setting BLOCK XAM mode.
 setmode:    staa mode	    ; $00 = XAM, $BA = STOR, $56 = BLOK XAM.
 blskip:	    inc  inptr+1    ; Advance text index.
 nextitem:   ldx  inptr
-            ldaa ,x         ; Get character.
+	    ldaa ,x         ; Get character.
 	    cmpa #$8d	    ; CR?
 	    beq  getline    ; Yes, done this line.
 	    cmpa #$ae	    ; "."?
@@ -117,7 +117,7 @@ nextitem:   ldx  inptr
 	    stx  ysav	    ; Save Y for comparison.
 
 nexthex:    ldx  inptr
-            ldaa ,x         ; Get character for hex test.
+	    ldaa ,x         ; Get character for hex test.
 	    eora #$b0	    ; Map digits to $0-9.
 	    cmpa #$09	    ; Digit?
 	    bls  dig	    ; Yes.
@@ -148,7 +148,7 @@ nothex:	    cpx  ysav	    ; Check if L, H empty (no hex digits).
 ; STOR mode
 	    ldx  st
 	    ldaa l	    ; LSD's of hex data.
-            staa ,x	    ; Store at current 'store index'.
+	    staa ,x	    ; Store at current 'store index'.
 	    inx
 	    stx  st
 tonextitem: bra nextitem    ; Get next command item.
@@ -203,11 +203,11 @@ xamnext:    clr  mode	    ; 0->MODE (XAM mode).
 	    beq  tonextitem ; Not less, so more data to output.
 	    inx
 	    stx  xam
-            ldaa xam+1	    ; Check low-order 'examine index' byte
+	    ldaa xam+1	    ; Check low-order 'examine index' byte
 	    anda #$07	    ;  For MOD 8 = 0
 	    bra  nxtprnt    ; always taken
 
-            org $fff8       ; vector table
+	    org $fff8       ; vector table
 	    fdb $0000	    ; IRQ
 	    fdb $0000	    ; SWI
 	    fdb $f000	    ; NMI
