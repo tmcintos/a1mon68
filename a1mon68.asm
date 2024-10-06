@@ -31,6 +31,11 @@ mode        equ $002b
 ysav        equ $002c       ; two bytes
 inptr       equ $002e       ; two bytes
 
+; interrupt vectors (jmp table)
+irq         equ $0030       ; 3 bytes
+swi         equ $0033       ; 3 bytes
+nmi         equ $0036       ; 3 bytes
+
 in	    equ $0200
 
 kbd	    equ $d010
@@ -208,7 +213,7 @@ xamnext:    clr  mode	    ; 0->MODE (XAM mode).
 	    bra  nxtprnt    ; always taken
 
 	    org $fff8       ; vector table
-	    fdb $0000	    ; IRQ
-	    fdb $0000	    ; SWI
-	    fdb $f000	    ; NMI
-	    fdb	$ff00	    ; RESET
+	    fdb irq	    ; IRQ
+	    fdb swi	    ; SWI
+	    fdb nmi	    ; NMI
+	    fdb	reset	    ; RESET
