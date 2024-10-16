@@ -1,0 +1,524 @@
+Assembling a1mon68.asm
+PASS 1
+ AS V1.42 Beta [Bld 277] - Source File a1mon68.asm - Page 1 - 10/16/2024 12:48:06
+
+
+    1/       0 :                        ; a1mon68: a rewrite of the Apple 1 monitor to run on an MC6800
+    2/       0 :                        ; microprocessor, rather than the MCS6502 microprocessor that
+    3/       0 :                        ; was standard.
+    4/       0 :                        
+    5/       0 :                        ; Copyright 2011 Eric Smith <spacewar@gmail.com>
+    6/       0 :                        
+    7/       0 :                        ; This source code will assemble with the AS Macro Assembler:
+    8/       0 :                        ;   http://john.ccac.rwth-aachen.de:8000/as/
+    9/       0 :                        ; With minor changes it should assemble with any MC6800 assembler.
+   10/       0 :                        
+   11/       0 :                        ; This program is free software; you can redistribute and/or modify it
+   12/       0 :                        ; under the terms of the GNU General Public License version 3 as
+   13/       0 :                        ; published by the Free Software Foundation.
+   14/       0 :                        ;
+   15/       0 :                        ; This program is distributed in the hope that it will be useful, but
+   16/       0 :                        ; WITHOUT ANY WARRANTY; without even the implied warranty of
+   17/       0 :                        ; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+   18/       0 :                        ; General Public License for more details.
+   19/       0 :                        ;	
+   20/       0 :                        ; You should have received a copy of the GNU General Public License
+   21/       0 :                        ; along with this program.  If not, see <http://www.gnu.org/licenses/>.
+   22/       0 :                        
+   23/   0 :                            	    cpu 6800
+   24/   0 :                            
+   25/   0 : =$24                       xam         equ $0024       ; two bytes
+   26/   0 : =$26                       st          equ $0026       ; two bytes
+   27/   0 : =$28                       h           equ $0028
+   28/   0 : =$29                       l           equ $0029
+   29/   0 :                            
+   30/   0 : =$2B                       mode        equ $002b
+   31/   0 : =$2C                       ysav        equ $002c       ; two bytes
+   32/   0 : =$2E                       inptr       equ $002e       ; two bytes
+   33/   0 :                            
+   34/   0 :                            ; interrupt vectors (jmp table)
+   35/   0 : =$30                       irq         equ $0030       ; 3 bytes
+   36/   0 : =$33                       swi         equ $0033       ; 3 bytes
+   37/   0 : =$36                       nmi         equ $0036       ; 3 bytes
+   38/   0 :                            
+   39/   0 : =$200                      in	    equ $0200
+   40/   0 :                            
+   41/   0 : =$D010                     kbd	    equ $d010
+   42/   0 : =$D011                     kbd_cr	    equ $d011
+   43/   0 : =$D012                     dsp	    equ $d012
+   44/   0 : =$D013                     dsp_cr	    equ $d013
+   45/   0 :                            
+   46/FF00 :                            	    org $ff00
+   47/FF00 :                            
+   48/FF00 :                            reset:      ; cld           ; No decimal mode on 6800, so we don't need
+   49/FF00 :                            	                    ;  need to clear it.
+   50/FF00 :                            	    ; cli           ; Disable interrupts - not actually needed on reset.
+   51/FF00 : C6 7F                      	    ldab #$7f	    ; Mask for DSP data direction register.
+   52/FF02 : F7 D0 12                   	    stab dsp	    ; Set it up.
+   53/FF05 : C6 A7                      	    ldab #$a7	    ; KBD and DSP control register mask.
+   54/FF07 : F7 D0 11                   	    stab kbd_cr	    ; Enable interrupts, set CA1, CB1, for
+   55/FF0A : F7 D0 13                   	    stab dsp_cr	    ;  positive edge sense/output mode.
+   56/FF0D : 8E 01 FF                   	    lds  #$01ff	    ; On the 6502, the monitor didn't initialize the
+   57/FF10 :                            	    	 	    ;  stack pointer, which was OK because it was
+   58/FF10 :                            			    ;  guaranteed to be somewhere in page 1. Not so
+   59/FF10 :                            			    ;  on the 6800!
+   60/FF10 :                            			    ; Ideally, I'd take advantage of the stack
+ AS V1.42 Beta [Bld 277] - Source File a1mon68.asm - Page 2 - 10/16/2024 12:48:06
+
+
+   61/FF10 :                            			    ;  starting right before the input buffer to
+   62/FF10 :                            			    ;  save a few bytes, but I haven't yet figured
+   63/FF10 :                            			    ;  out how to do it.
+   64/FF10 :                            
+   65/FF10 :                            ; Note that B contains $a7 here, which means that the incb below will
+   66/FF10 :                            ; set the negative flag, causing the bpl to fall through into escape.
+   67/FF10 :                            ; This saves us a "bra escape" instruction here.
+   68/FF10 :                            
+   69/FF10 :                            ; Get a line of input from the keyboard, echoing to display.
+   70/FF10 :                            ; Normally enter at escape or getline.
+   71/FF10 :                            
+   72/FF10 : 81 DF                      notcr:	    cmpa #$df	    ; "_"?  [NB back arrow]
+   73/FF12 : 27 FE                      	    beq  backspace  ; Yes.
+   74/FF14 : 81 9B                      	    cmpa #$9b	    ; ESC?
+   75/FF16 : 27 FE                      	    beq  escape	    ; Yes.
+   76/FF18 : 08                         	    inx  	    ; Advance text index.
+   77/FF19 : 5C                         	    incb
+   78/FF1A : 2A FE                      	    bpl  nextchar   ; Auto ESC if > 127.
+   79/FF1C :                            
+   80/FF1C : 86 DC                      escape:     ldaa #$dc	    ; "\".
+   81/FF1E : BD FF 1E                   	    jsr  echo	    ; Output it.
+   82/FF21 :                            
+   83/FF21 : 86 8D                      getline:    ldaa #$8d	    ; CR.
+   84/FF23 : BD FF 23                   	    jsr  echo	    ; Output it.
+   85/FF26 : CE 02 01                   	    ldx  #in+1	    ; Initiallize [sic] text index.
+   86/FF29 : C6 01                      	    ldab #1
+   87/FF2B : 09                         backspace:  dex	            ; Back up text index.
+   88/FF2C : 5A                         	    decb
+   89/FF2D : 2B F2                      	    bmi  getline    ; Beyond start of line, reinitialize.
+   90/FF2F :                            
+   91/FF2F : B6 D0 11                   nextchar:   ldaa kbd_cr	    ; Key ready?
+   92/FF32 : 2A FB                      	    bpl  nextchar   ; Loop until ready.
+   93/FF34 : B6 D0 10                   	    ldaa kbd	    ; Load character. B7 should be '1'.
+   94/FF37 : A7 00                      	    staa ,x         ; Add to text buffer.
+   95/FF39 : 8D FE                      	    bsr  echo	    ; Display character.
+   96/FF3B : 81 8D                      	    cmpa #$8d	    ; CR?
+   97/FF3D : 26 D1                      	    bne  notcr	    ; No.
+   98/FF3F :                            
+   99/FF3F :                            ; Process an input line.
+  100/FF3F :                            
+  101/FF3F : CE 02 FF                   cr:	    ldx  #in+256-1  ; Reset text index to in-1, +256 so that
+  102/FF42 :                            	                    ;  'inc inptr+1' will result in $0200.
+  103/FF42 : DF 2E                      	    stx  inptr
+  104/FF44 : 4F                         	    clra	    ; For XAM mode. 0->B.
+  105/FF45 :                            
+  106/FF45 : 48                         setblok:    asl	 a	    ; Leaves $56 if setting BLOCK XAM mode.
+  107/FF46 : 97 2B                      setmode:    staa mode	    ; $00 = XAM, $BA = STOR, $56 = BLOK XAM.
+  108/FF48 : 7C 00 2F                   blskip:	    inc  inptr+1    ; Advance text index.
+  109/FF4B : DE 2E                      nextitem:   ldx  inptr
+  110/FF4D : A6 00                      	    ldaa ,x         ; Get character.
+  111/FF4F : 81 8D                      	    cmpa #$8d	    ; CR?
+  112/FF51 : 27 CE                      	    beq  getline    ; Yes, done this line.
+  113/FF53 : 81 AE                      	    cmpa #$ae	    ; "."?
+  114/FF55 : 27 EE                      	    beq  setblok    ; Set BLOCK XAM mode.
+  115/FF57 : 23 EF                      	    bls  blskip	    ; Skip delimiter.
+  116/FF59 : 81 BA                      	    cmpa #$ba	    ; ":"?
+  117/FF5B : 27 E9                      	    beq  setmode    ; Yes, set STOR mode.
+  118/FF5D : 81 D2                      	    cmpa #$d2	    ; "R"?
+  119/FF5F : 27 FE                      	    beq  run	    ; Yes, run user program.
+  120/FF61 : 7F 00 29                   	    clr  l	    ; $00->L.
+ AS V1.42 Beta [Bld 277] - Source File a1mon68.asm - Page 3 - 10/16/2024 12:48:06
+
+
+  121/FF64 : 7F 00 28                   	    clr  h	    ;  and H.
+  122/FF67 : DF 2C                      	    stx  ysav	    ; Save Y for comparison.
+  123/FF69 :                            
+  124/FF69 : DE 2E                      nexthex:    ldx  inptr
+  125/FF6B : A6 00                      	    ldaa ,x         ; Get character for hex test.
+  126/FF6D : 88 B0                      	    eora #$b0	    ; Map digits to $0-9.
+  127/FF6F : 81 09                      	    cmpa #$09	    ; Digit?
+  128/FF71 : 23 FE                      	    bls  dig	    ; Yes.
+  129/FF73 : 8B 89                      	    adda #$89	    ; Map letter "A"-"F" to $FA-FF.
+  130/FF75 : 81 F9                      	    cmpa #$f9	    ; Hex letter?
+  131/FF77 : 23 FE                      	    bls  nothex	    ; No, character not hex.
+  132/FF79 :                            
+  133/FF79 : 48                         dig:	    asla            ; Hex digit to MSD of A.
+  134/FF7A : 48                         	    asla
+  135/FF7B : 48                         	    asla
+  136/FF7C : 48                         	    asla
+  137/FF7D :                            
+  138/FF7D : C6 04                      	    ldab #$04       ; Shift count.
+  139/FF7F : 48                         hexshift:   asla            ; Hex digit left, MSB to carry.
+  140/FF80 : 79 00 29                   	    rol  l	    ; Rotate into LSD.
+  141/FF83 : 79 00 28                   	    rol  h	    ; Rotate into MSD's.
+  142/FF86 : 5A                         	    decb 	    ; Done 4 shifts?
+  143/FF87 : 26 F6                      	    bne  hexshift   ; No, loop.
+  144/FF89 :                            
+  145/FF89 : 7C 00 2F                   	    inc  inptr+1    ; Advance text index.
+  146/FF8C : 20 DB                      	    bra  nexthex    ; Always taken. Check next character for hex.
+  147/FF8E :                            
+  148/FF8E : 9C 2C                      nothex:	    cpx  ysav	    ; Check if L, H empty (no hex digits).
+  149/FF90 : 27 8A                      	    beq  escape	    ; Yes, generate ESC sequence.
+  150/FF92 : 7D 00 2B                   	    tst  mode	    ; Test MODE byte.
+  151/FF95 : 2A FE                      	    bpl  notstor    ; B6=0 for STOR, 1 for XAM and BLOCK XAM
+  152/FF97 :                            
+  153/FF97 :                            ; STOR mode
+  154/FF97 : DE 26                      	    ldx  st
+  155/FF99 : 96 29                      	    ldaa l	    ; LSD's of hex data.
+  156/FF9B : A7 00                      	    staa ,x	    ; Store at current 'store index'.
+  157/FF9D : 08                         	    inx
+  158/FF9E : DF 26                      	    stx  st
+  159/FFA0 : 20 A9                      tonextitem: bra nextitem    ; Get next command item.
+  160/FFA2 :                            
+  161/FFA2 : 36                         prbyte:	    psh  a	    ; Save A for LSD.
+  162/FFA3 : 44                         	    lsra
+  163/FFA4 : 44                         	    lsra
+  164/FFA5 : 44                         	    lsra	    ; MSD to LSD position.
+  165/FFA6 : 44                         	    lsra
+  166/FFA7 : 8D FE                      	    bsr  prhex	    ; Output hex digit.
+  167/FFA9 : 32                         	    pul  a	    ; Restore A.
+  168/FFAA : 84 0F                      prhex:	    anda #$0f	    ; Mask LSD for hex print.
+  169/FFAC : 8A B0                      	    oraa #$b0	    ; Add "0".
+  170/FFAE : 81 B9                      	    cmpa #$b9	    ; Digit?
+  171/FFB0 : 23 FE                      	    bls  echo	    ; Yes, output it.
+  172/FFB2 : 8B 07                      	    adda #$07	    ; Add offset for letter.
+  173/FFB4 : 7D D0 12                   echo:	    tst  dsp	    ; DA bit (B7) cleared yet?
+  174/FFB7 : 2B FB                      	    bmi  echo	    ; No, wait for display.
+  175/FFB9 : B7 D0 12                   	    staa dsp	    ; Output character. Sets DA.
+  176/FFBC : 39                         	    rts		    ; Return.
+  177/FFBD :                            
+  178/FFBD : DE 24                      run:        ldx  xam
+  179/FFBF : 6E 00                      	    jmp  ,x	    ; Run at current XAM index.
+  180/FFC1 :                            
+ AS V1.42 Beta [Bld 277] - Source File a1mon68.asm - Page 4 - 10/16/2024 12:48:06
+
+
+  181/FFC1 : 26 FE                      notstor:    bne  xamnext    ; mode = $00 for XAM, $56 for BLOCK XAM.
+  182/FFC3 :                            
+  183/FFC3 : DE 28                      	    ldx  h	    ; Copy hex data to
+  184/FFC5 : DF 26                      	    stx  st	    ;  'store index'.
+  185/FFC7 : DF 24                      	    stx  xam	    ; And to 'XAM index'.
+  186/FFC9 : 4F                         	    clra	    ; set Z flag to force following branch.
+  187/FFCA :                            
+  188/FFCA : 26 FE                      nxtprnt:    bne  prdata	    ; NE means no address to print.
+  189/FFCC : 86 8D                      	    ldaa #$8d	    ; CR.
+  190/FFCE : 8D E4                      	    bsr  echo	    ; Output it.
+  191/FFD0 : 96 24                      	    ldaa xam	    ; 'Examine index' high-order byte.
+  192/FFD2 : 8D CE                      	    bsr  prbyte	    ; Output it in hex format.
+  193/FFD4 : 96 25                      	    ldaa xam+1	    ; Low-order 'Examine index' byte.
+  194/FFD6 : 8D CA                      	    bsr  prbyte	    ; Output it in hex format.
+  195/FFD8 : 86 BA                      	    ldaa #$ba	    ; ":".
+  196/FFDA : 8D D8                      	    bsr  echo	    ; Output it.
+  197/FFDC :                            
+  198/FFDC : 86 A0                      prdata:	    ldaa #$a0	    ; Blank.
+  199/FFDE : 8D D4                      	    bsr  echo	    ; Output it.
+  200/FFE0 :                            
+  201/FFE0 : DE 24                      	    ldx  xam
+  202/FFE2 : A6 00                      	    ldaa ,x         ; Get data byte at 'examine index'.
+  203/FFE4 : 8D BC                      	    bsr  prbyte	    ; Output it in hex format.
+  204/FFE6 :                            
+  205/FFE6 : 7F 00 2B                   xamnext:    clr  mode	    ; 0->MODE (XAM mode).
+  206/FFE9 : DE 24                      	    ldx  xam	    ; Compare 'examine index' to hex data.
+  207/FFEB : 9C 28                      	    cpx  h
+  208/FFED : 27 B1                      	    beq  tonextitem ; Not less, so more data to output.
+  209/FFEF : 08                         	    inx
+  210/FFF0 : DF 24                      	    stx  xam
+  211/FFF2 : 96 25                      	    ldaa xam+1	    ; Check low-order 'examine index' byte
+  212/FFF4 : 84 07                      	    anda #$07	    ;  For MOD 8 = 0
+  213/FFF6 : 20 D2                      	    bra  nxtprnt    ; always taken
+  214/FFF8 :                            
+  215/FFF8 :                            	    org $fff8       ; vector table
+  216/FFF8 : 00 30                      	    fdb irq	    ; IRQ
+  217/FFFA : 00 33                      	    fdb swi	    ; SWI
+  218/FFFC : 00 36                      	    fdb nmi	    ; NMI
+  219/FFFE : FF 00                      	    fdb	reset	    ; RESET
+  220/10000 :                           
+a1mon68.asm(220)
+PASS 2
+ AS V1.42 Beta [Bld 277] - Source File a1mon68.asm - Page 1 - 10/16/2024 12:48:06
+
+
+    1/   0 :                            ; a1mon68: a rewrite of the Apple 1 monitor to run on an MC6800
+    2/   0 :                            ; microprocessor, rather than the MCS6502 microprocessor that
+    3/   0 :                            ; was standard.
+    4/   0 :                            
+    5/   0 :                            ; Copyright 2011 Eric Smith <spacewar@gmail.com>
+    6/   0 :                            
+    7/   0 :                            ; This source code will assemble with the AS Macro Assembler:
+    8/   0 :                            ;   http://john.ccac.rwth-aachen.de:8000/as/
+    9/   0 :                            ; With minor changes it should assemble with any MC6800 assembler.
+   10/   0 :                            
+   11/   0 :                            ; This program is free software; you can redistribute and/or modify it
+   12/   0 :                            ; under the terms of the GNU General Public License version 3 as
+   13/   0 :                            ; published by the Free Software Foundation.
+   14/   0 :                            ;
+   15/   0 :                            ; This program is distributed in the hope that it will be useful, but
+   16/   0 :                            ; WITHOUT ANY WARRANTY; without even the implied warranty of
+   17/   0 :                            ; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+   18/   0 :                            ; General Public License for more details.
+   19/   0 :                            ;	
+   20/   0 :                            ; You should have received a copy of the GNU General Public License
+   21/   0 :                            ; along with this program.  If not, see <http://www.gnu.org/licenses/>.
+   22/   0 :                            
+   23/   0 :                            	    cpu 6800
+   24/   0 :                            
+   25/   0 : =$24                       xam         equ $0024       ; two bytes
+   26/   0 : =$26                       st          equ $0026       ; two bytes
+   27/   0 : =$28                       h           equ $0028
+   28/   0 : =$29                       l           equ $0029
+   29/   0 :                            
+   30/   0 : =$2B                       mode        equ $002b
+   31/   0 : =$2C                       ysav        equ $002c       ; two bytes
+   32/   0 : =$2E                       inptr       equ $002e       ; two bytes
+   33/   0 :                            
+   34/   0 :                            ; interrupt vectors (jmp table)
+   35/   0 : =$30                       irq         equ $0030       ; 3 bytes
+   36/   0 : =$33                       swi         equ $0033       ; 3 bytes
+   37/   0 : =$36                       nmi         equ $0036       ; 3 bytes
+   38/   0 :                            
+   39/   0 : =$200                      in	    equ $0200
+   40/   0 :                            
+   41/   0 : =$D010                     kbd	    equ $d010
+   42/   0 : =$D011                     kbd_cr	    equ $d011
+   43/   0 : =$D012                     dsp	    equ $d012
+   44/   0 : =$D013                     dsp_cr	    equ $d013
+   45/   0 :                            
+   46/FF00 :                            	    org $ff00
+   47/FF00 :                            
+   48/FF00 :                            reset:      ; cld           ; No decimal mode on 6800, so we don't need
+   49/FF00 :                            	                    ;  need to clear it.
+   50/FF00 :                            	    ; cli           ; Disable interrupts - not actually needed on reset.
+   51/FF00 : C6 7F                      	    ldab #$7f	    ; Mask for DSP data direction register.
+   52/FF02 : F7 D0 12                   	    stab dsp	    ; Set it up.
+   53/FF05 : C6 A7                      	    ldab #$a7	    ; KBD and DSP control register mask.
+   54/FF07 : F7 D0 11                   	    stab kbd_cr	    ; Enable interrupts, set CA1, CB1, for
+   55/FF0A : F7 D0 13                   	    stab dsp_cr	    ;  positive edge sense/output mode.
+   56/FF0D : 8E 01 FF                   	    lds  #$01ff	    ; On the 6502, the monitor didn't initialize the
+   57/FF10 :                            	    	 	    ;  stack pointer, which was OK because it was
+   58/FF10 :                            			    ;  guaranteed to be somewhere in page 1. Not so
+   59/FF10 :                            			    ;  on the 6800!
+   60/FF10 :                            			    ; Ideally, I'd take advantage of the stack
+ AS V1.42 Beta [Bld 277] - Source File a1mon68.asm - Page 2 - 10/16/2024 12:48:06
+
+
+   61/FF10 :                            			    ;  starting right before the input buffer to
+   62/FF10 :                            			    ;  save a few bytes, but I haven't yet figured
+   63/FF10 :                            			    ;  out how to do it.
+   64/FF10 :                            
+   65/FF10 :                            ; Note that B contains $a7 here, which means that the incb below will
+   66/FF10 :                            ; set the negative flag, causing the bpl to fall through into escape.
+   67/FF10 :                            ; This saves us a "bra escape" instruction here.
+   68/FF10 :                            
+   69/FF10 :                            ; Get a line of input from the keyboard, echoing to display.
+   70/FF10 :                            ; Normally enter at escape or getline.
+   71/FF10 :                            
+   72/FF10 : 81 DF                      notcr:	    cmpa #$df	    ; "_"?  [NB back arrow]
+   73/FF12 : 27 17                      	    beq  backspace  ; Yes.
+   74/FF14 : 81 9B                      	    cmpa #$9b	    ; ESC?
+   75/FF16 : 27 04                      	    beq  escape	    ; Yes.
+   76/FF18 : 08                         	    inx  	    ; Advance text index.
+   77/FF19 : 5C                         	    incb
+   78/FF1A : 2A 13                      	    bpl  nextchar   ; Auto ESC if > 127.
+   79/FF1C :                            
+   80/FF1C : 86 DC                      escape:     ldaa #$dc	    ; "\".
+   81/FF1E : BD FF B4                   	    jsr  echo	    ; Output it.
+   82/FF21 :                            
+   83/FF21 : 86 8D                      getline:    ldaa #$8d	    ; CR.
+   84/FF23 : BD FF B4                   	    jsr  echo	    ; Output it.
+   85/FF26 : CE 02 01                   	    ldx  #in+1	    ; Initiallize [sic] text index.
+   86/FF29 : C6 01                      	    ldab #1
+   87/FF2B : 09                         backspace:  dex	            ; Back up text index.
+   88/FF2C : 5A                         	    decb
+   89/FF2D : 2B F2                      	    bmi  getline    ; Beyond start of line, reinitialize.
+   90/FF2F :                            
+   91/FF2F : B6 D0 11                   nextchar:   ldaa kbd_cr	    ; Key ready?
+   92/FF32 : 2A FB                      	    bpl  nextchar   ; Loop until ready.
+   93/FF34 : B6 D0 10                   	    ldaa kbd	    ; Load character. B7 should be '1'.
+   94/FF37 : A7 00                      	    staa ,x         ; Add to text buffer.
+   95/FF39 : 8D 79                      	    bsr  echo	    ; Display character.
+   96/FF3B : 81 8D                      	    cmpa #$8d	    ; CR?
+   97/FF3D : 26 D1                      	    bne  notcr	    ; No.
+   98/FF3F :                            
+   99/FF3F :                            ; Process an input line.
+  100/FF3F :                            
+  101/FF3F : CE 02 FF                   cr:	    ldx  #in+256-1  ; Reset text index to in-1, +256 so that
+  102/FF42 :                            	                    ;  'inc inptr+1' will result in $0200.
+  103/FF42 : DF 2E                      	    stx  inptr
+  104/FF44 : 4F                         	    clra	    ; For XAM mode. 0->B.
+  105/FF45 :                            
+  106/FF45 : 48                         setblok:    asl	 a	    ; Leaves $56 if setting BLOCK XAM mode.
+  107/FF46 : 97 2B                      setmode:    staa mode	    ; $00 = XAM, $BA = STOR, $56 = BLOK XAM.
+  108/FF48 : 7C 00 2F                   blskip:	    inc  inptr+1    ; Advance text index.
+  109/FF4B : DE 2E                      nextitem:   ldx  inptr
+  110/FF4D : A6 00                      	    ldaa ,x         ; Get character.
+  111/FF4F : 81 8D                      	    cmpa #$8d	    ; CR?
+  112/FF51 : 27 CE                      	    beq  getline    ; Yes, done this line.
+  113/FF53 : 81 AE                      	    cmpa #$ae	    ; "."?
+  114/FF55 : 27 EE                      	    beq  setblok    ; Set BLOCK XAM mode.
+  115/FF57 : 23 EF                      	    bls  blskip	    ; Skip delimiter.
+  116/FF59 : 81 BA                      	    cmpa #$ba	    ; ":"?
+  117/FF5B : 27 E9                      	    beq  setmode    ; Yes, set STOR mode.
+  118/FF5D : 81 D2                      	    cmpa #$d2	    ; "R"?
+  119/FF5F : 27 5C                      	    beq  run	    ; Yes, run user program.
+  120/FF61 : 7F 00 29                   	    clr  l	    ; $00->L.
+ AS V1.42 Beta [Bld 277] - Source File a1mon68.asm - Page 3 - 10/16/2024 12:48:06
+
+
+  121/FF64 : 7F 00 28                   	    clr  h	    ;  and H.
+  122/FF67 : DF 2C                      	    stx  ysav	    ; Save Y for comparison.
+  123/FF69 :                            
+  124/FF69 : DE 2E                      nexthex:    ldx  inptr
+  125/FF6B : A6 00                      	    ldaa ,x         ; Get character for hex test.
+  126/FF6D : 88 B0                      	    eora #$b0	    ; Map digits to $0-9.
+  127/FF6F : 81 09                      	    cmpa #$09	    ; Digit?
+  128/FF71 : 23 06                      	    bls  dig	    ; Yes.
+  129/FF73 : 8B 89                      	    adda #$89	    ; Map letter "A"-"F" to $FA-FF.
+  130/FF75 : 81 F9                      	    cmpa #$f9	    ; Hex letter?
+  131/FF77 : 23 15                      	    bls  nothex	    ; No, character not hex.
+  132/FF79 :                            
+  133/FF79 : 48                         dig:	    asla            ; Hex digit to MSD of A.
+  134/FF7A : 48                         	    asla
+  135/FF7B : 48                         	    asla
+  136/FF7C : 48                         	    asla
+  137/FF7D :                            
+  138/FF7D : C6 04                      	    ldab #$04       ; Shift count.
+  139/FF7F : 48                         hexshift:   asla            ; Hex digit left, MSB to carry.
+  140/FF80 : 79 00 29                   	    rol  l	    ; Rotate into LSD.
+  141/FF83 : 79 00 28                   	    rol  h	    ; Rotate into MSD's.
+  142/FF86 : 5A                         	    decb 	    ; Done 4 shifts?
+  143/FF87 : 26 F6                      	    bne  hexshift   ; No, loop.
+  144/FF89 :                            
+  145/FF89 : 7C 00 2F                   	    inc  inptr+1    ; Advance text index.
+  146/FF8C : 20 DB                      	    bra  nexthex    ; Always taken. Check next character for hex.
+  147/FF8E :                            
+  148/FF8E : 9C 2C                      nothex:	    cpx  ysav	    ; Check if L, H empty (no hex digits).
+  149/FF90 : 27 8A                      	    beq  escape	    ; Yes, generate ESC sequence.
+  150/FF92 : 7D 00 2B                   	    tst  mode	    ; Test MODE byte.
+  151/FF95 : 2A 2A                      	    bpl  notstor    ; B6=0 for STOR, 1 for XAM and BLOCK XAM
+  152/FF97 :                            
+  153/FF97 :                            ; STOR mode
+  154/FF97 : DE 26                      	    ldx  st
+  155/FF99 : 96 29                      	    ldaa l	    ; LSD's of hex data.
+  156/FF9B : A7 00                      	    staa ,x	    ; Store at current 'store index'.
+  157/FF9D : 08                         	    inx
+  158/FF9E : DF 26                      	    stx  st
+  159/FFA0 : 20 A9                      tonextitem: bra nextitem    ; Get next command item.
+  160/FFA2 :                            
+  161/FFA2 : 36                         prbyte:	    psh  a	    ; Save A for LSD.
+  162/FFA3 : 44                         	    lsra
+  163/FFA4 : 44                         	    lsra
+  164/FFA5 : 44                         	    lsra	    ; MSD to LSD position.
+  165/FFA6 : 44                         	    lsra
+  166/FFA7 : 8D 01                      	    bsr  prhex	    ; Output hex digit.
+  167/FFA9 : 32                         	    pul  a	    ; Restore A.
+  168/FFAA : 84 0F                      prhex:	    anda #$0f	    ; Mask LSD for hex print.
+  169/FFAC : 8A B0                      	    oraa #$b0	    ; Add "0".
+  170/FFAE : 81 B9                      	    cmpa #$b9	    ; Digit?
+  171/FFB0 : 23 02                      	    bls  echo	    ; Yes, output it.
+  172/FFB2 : 8B 07                      	    adda #$07	    ; Add offset for letter.
+  173/FFB4 : 7D D0 12                   echo:	    tst  dsp	    ; DA bit (B7) cleared yet?
+  174/FFB7 : 2B FB                      	    bmi  echo	    ; No, wait for display.
+  175/FFB9 : B7 D0 12                   	    staa dsp	    ; Output character. Sets DA.
+  176/FFBC : 39                         	    rts		    ; Return.
+  177/FFBD :                            
+  178/FFBD : DE 24                      run:        ldx  xam
+  179/FFBF : 6E 00                      	    jmp  ,x	    ; Run at current XAM index.
+  180/FFC1 :                            
+ AS V1.42 Beta [Bld 277] - Source File a1mon68.asm - Page 4 - 10/16/2024 12:48:06
+
+
+  181/FFC1 : 26 23                      notstor:    bne  xamnext    ; mode = $00 for XAM, $56 for BLOCK XAM.
+  182/FFC3 :                            
+  183/FFC3 : DE 28                      	    ldx  h	    ; Copy hex data to
+  184/FFC5 : DF 26                      	    stx  st	    ;  'store index'.
+  185/FFC7 : DF 24                      	    stx  xam	    ; And to 'XAM index'.
+  186/FFC9 : 4F                         	    clra	    ; set Z flag to force following branch.
+  187/FFCA :                            
+  188/FFCA : 26 10                      nxtprnt:    bne  prdata	    ; NE means no address to print.
+  189/FFCC : 86 8D                      	    ldaa #$8d	    ; CR.
+  190/FFCE : 8D E4                      	    bsr  echo	    ; Output it.
+  191/FFD0 : 96 24                      	    ldaa xam	    ; 'Examine index' high-order byte.
+  192/FFD2 : 8D CE                      	    bsr  prbyte	    ; Output it in hex format.
+  193/FFD4 : 96 25                      	    ldaa xam+1	    ; Low-order 'Examine index' byte.
+  194/FFD6 : 8D CA                      	    bsr  prbyte	    ; Output it in hex format.
+  195/FFD8 : 86 BA                      	    ldaa #$ba	    ; ":".
+  196/FFDA : 8D D8                      	    bsr  echo	    ; Output it.
+  197/FFDC :                            
+  198/FFDC : 86 A0                      prdata:	    ldaa #$a0	    ; Blank.
+  199/FFDE : 8D D4                      	    bsr  echo	    ; Output it.
+  200/FFE0 :                            
+  201/FFE0 : DE 24                      	    ldx  xam
+  202/FFE2 : A6 00                      	    ldaa ,x         ; Get data byte at 'examine index'.
+  203/FFE4 : 8D BC                      	    bsr  prbyte	    ; Output it in hex format.
+  204/FFE6 :                            
+  205/FFE6 : 7F 00 2B                   xamnext:    clr  mode	    ; 0->MODE (XAM mode).
+  206/FFE9 : DE 24                      	    ldx  xam	    ; Compare 'examine index' to hex data.
+  207/FFEB : 9C 28                      	    cpx  h
+  208/FFED : 27 B1                      	    beq  tonextitem ; Not less, so more data to output.
+  209/FFEF : 08                         	    inx
+  210/FFF0 : DF 24                      	    stx  xam
+  211/FFF2 : 96 25                      	    ldaa xam+1	    ; Check low-order 'examine index' byte
+  212/FFF4 : 84 07                      	    anda #$07	    ;  For MOD 8 = 0
+  213/FFF6 : 20 D2                      	    bra  nxtprnt    ; always taken
+  214/FFF8 :                            
+  215/FFF8 :                            	    org $fff8       ; vector table
+  216/FFF8 : 00 30                      	    fdb irq	    ; IRQ
+  217/FFFA : 00 33                      	    fdb swi	    ; SWI
+  218/FFFC : 00 36                      	    fdb nmi	    ; NMI
+  219/FFFE : FF 00                      	    fdb	reset	    ; RESET
+  220/10000 :                           
+a1mon68.asm(220)
+ AS V1.42 Beta [Bld 277] - Source File a1mon68.asm - Page 5 - 10/16/2024 12:48:06
+
+
+  Symbol Table (* = unused):
+  --------------------------
+
+*ARCHITECTURE :                                      "aarch64-apple-darwin" - |
+ BACKSPACE :                   FF2B C |  BLSKIP :                      FF48 C |
+*CASESENSITIVE :                  0 - | *CONSTPI :        3.141592653589793 - |
+*CR :                          FF3F C | *DATE :                "10/16/2024" - |
+ DIG :                         FF79 C |  DSP :                         D012 - |
+ DSP_CR :                      D013 - |  ECHO :                        FFB4 C |
+ ESCAPE :                      FF1C C | *FALSE :                          0 - |
+*FLOATMAX :      1.797693134866E308 - |  GETLINE :                     FF21 C |
+ H :                             28 - | *HAS64 :                          1 - |
+ HEXSHIFT :                    FF7F C |  IN :                           200 - |
+ INPTR :                         2E - |  IRQ :                           30 - |
+ KBD :                         D010 - |  KBD_CR :                      D011 - |
+ L :                             29 - | *LISTON :                         1 - |
+*MACEXP :                         7 - |  MODE :                          2B - |
+*MOMCPU :                      6800 - | *MOMCPUNAME :                "6800" - |
+*NESTMAX :                      100 - |  NEXTCHAR :                    FF2F C |
+ NEXTHEX :                     FF69 C |  NEXTITEM :                    FF4B C |
+ NMI :                           36 - |  NOTCR :                       FF10 C |
+ NOTHEX :                      FF8E C |  NOTSTOR :                     FFC1 C |
+ NXTPRNT :                     FFCA C | *PADDING :                        0 - |
+ PRBYTE :                      FFA2 C |  PRDATA :                      FFDC C |
+ PRHEX :                       FFAA C | *RELAXED :                        0 - |
+ RESET :                       FF00 C |  RUN :                         FFBD C |
+ SETBLOK :                     FF45 C |  SETMODE :                     FF46 C |
+ ST :                            26 - |  SWI :                           33 - |
+*TIME :                  "12:48:06" - |  TONEXTITEM :                  FFA0 C |
+*TRUE :                           1 - | *VERSION :                     142F - |
+ XAM :                           24 - |  XAMNEXT :                     FFE6 C |
+ YSAV :                          2C - |
+
+     56 symbols
+     18 unused symbols
+
+ AS V1.42 Beta [Bld 277] - Source File a1mon68.asm - Page 6 - 10/16/2024 12:48:06
+
+
+  Code Pages:
+  ----------
+
+STANDARD (0 changed characters)
+
+1 code page
+
+0.00 seconds assembly time
+
+    220 lines source file
+      2 passes
+      0 errors
+      0 warnings
