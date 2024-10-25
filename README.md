@@ -28,7 +28,7 @@ manual](http://apple1.chez.com/Apple1project/Docs/pdf/AppleI_Manual.pdf)
 |PRBYTE  | $FFA2   | prints one byte (HEX) _(data from ACC A, contents of ACC A disturbed.)_ |
 |PRHEX   | $FFAA   | prints one hex digit _(data from four least significant bits of ACC A, contents of ACC A disturbed.)_ |
 
-Use of RAM locations $24 to $2F are used by the monitor and should be
+RAM locations $24 to $2F are used by the monitor and should be
 avoided by client software that makes use of the monitor.
 
 _**NOTE**: This version of the monitor uses RAM locations $30 to $38 as
